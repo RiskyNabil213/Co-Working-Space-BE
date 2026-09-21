@@ -232,11 +232,11 @@ export class ReservasiService {
     const params: any[] = [memberId, user.maker_id];
 
     if (query?.month) {
-      sql += ' AND strftime("%m", r.tanggal_reservasi) = ?';
+      sql += ' AND SUBSTR(r.tanggal_reservasi, 6, 2) = ?';
       params.push(String(query.month).padStart(2, '0'));
     }
     if (query?.year) {
-      sql += ' AND strftime("%Y", r.tanggal_reservasi) = ?';
+      sql += ' AND SUBSTR(r.tanggal_reservasi, 1, 4) = ?';
       params.push(String(query.year));
     }
     if (query?.status && query.status !== 'all') {

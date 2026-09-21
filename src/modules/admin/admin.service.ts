@@ -466,10 +466,10 @@ export class AdminService {
     }
     if (month && year) {
       const monthStr = String(month).padStart(2, '0');
-      sql += ` AND strftime('%Y-%m', r.tanggal_reservasi) = ?`;
+      sql += ` AND SUBSTR(r.tanggal_reservasi, 1, 7) = ?`;
       params.push(`${year}-${monthStr}`);
     } else if (year) {
-      sql += ` AND strftime('%Y', r.tanggal_reservasi) = ?`;
+      sql += ` AND SUBSTR(r.tanggal_reservasi, 1, 4) = ?`;
       params.push(String(year));
     }
     if (search) {
@@ -811,13 +811,13 @@ export class AdminService {
 
     const monthlyBreakdown = await this.db.all(
       `SELECT 
-         strftime('%Y-%m', tanggal_reservasi) as bulan,
+         SUBSTR(tanggal_reservasi, 1, 7) as bulan,
          COUNT(*) as jumlah_reservasi,
          SUM(total_bayar) as total_pendapatan,
          SUM(CASE WHEN status IN ('selesai', 'aktif', 'disetujui') THEN total_bayar ELSE 0 END) as pendapatan_bersih
        FROM reservasis
        WHERE maker_id = ? AND status != 'dibatalkan'
-       GROUP BY strftime('%Y-%m', tanggal_reservasi)
+       GROUP BY SUBSTR(tanggal_reservasi, 1, 7)
        ORDER BY bulan DESC`,
       [user.maker_id],
     );
@@ -880,18 +880,18 @@ export class AdminService {
          COALESCE(SUM(CASE WHEN status = 'selesai' THEN 1 ELSE 0 END), 0) as selesai,
          COALESCE(SUM(CASE WHEN status = 'dibatalkan' THEN 1 ELSE 0 END), 0) as dibatalkan
        FROM reservasis
-       WHERE maker_id = ? AND strftime('%Y-%m', tanggal_reservasi) = ? AND status != 'dibatalkan'`,
+       WHERE maker_id = ? AND SUBSTR(tanggal_reservasi, 1, 7) = ? AND status != 'dibatalkan'`,
       [user.maker_id, targetPeriod],
     );
 
     const dailyRows = await this.db.all(
       `SELECT 
          tanggal_reservasi as tanggal,
-         CAST(strftime('%d', tanggal_reservasi) AS INTEGER) as day_num,
+         CAST(SUBSTR(tanggal_reservasi, 9, 2) AS INTEGER) as day_num,
          COUNT(*) as total_reservasi,
          COALESCE(SUM(total_bayar), 0) as pendapatan_harian
        FROM reservasis
-       WHERE maker_id = ? AND strftime('%Y-%m', tanggal_reservasi) = ? AND status != 'dibatalkan'
+       WHERE maker_id = ? AND SUBSTR(tanggal_reservasi, 1, 7) = ? AND status != 'dibatalkan'
        GROUP BY tanggal_reservasi
        ORDER BY day_num ASC`,
       [user.maker_id, targetPeriod],
@@ -941,7 +941,7 @@ export class AdminService {
          COALESCE(SUM(r.total_bayar), 0) as total_pendapatan
        FROM reservasis r
        LEFT JOIN spaces s ON r.id_space = s.id
-       WHERE r.maker_id = ? AND strftime('%Y-%m', r.tanggal_reservasi) = ? AND r.status != 'dibatalkan'
+       WHERE r.maker_id = ? AND SUBSTR(r.tanggal_reservasi, 1, 7) = ? AND r.status != 'dibatalkan'
        GROUP BY COALESCE(s.tipe, 'desk')
        ORDER BY total_pendapatan DESC`,
       [user.maker_id, targetPeriod],
