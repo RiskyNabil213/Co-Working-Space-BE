@@ -23,25 +23,33 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   private async initPostgres() {
     let poolConfig: PoolConfig;
 
-    if (process.env.DATABASE_URL) {
+    const connectionString =
+      process.env.DATABASE_URL ||
+      process.env.DATABASE_PRIVATE_URL ||
+      process.env.DATABASE_PUBLIC_URL ||
+      process.env.POSTGRES_URL;
+
+    if (connectionString) {
+      this.logger.log(' Connecting to PostgreSQL via connection string...');
       const isRemote =
-        process.env.DATABASE_URL.includes('supabase') ||
-        process.env.DATABASE_URL.includes('neon') ||
-        process.env.DATABASE_URL.includes('railway') ||
-        process.env.DATABASE_URL.includes('aiven') ||
+        connectionString.includes('supabase') ||
+        connectionString.includes('neon') ||
+        connectionString.includes('aiven') ||
         process.env.DB_SSL === 'true';
 
       poolConfig = {
-        connectionString: process.env.DATABASE_URL,
+        connectionString,
         ssl: isRemote ? { rejectUnauthorized: false } : undefined,
       };
     } else {
-      const host = process.env.DB_HOST || 'localhost';
-      const port = Number(process.env.DB_PORT) || 5432;
-      const user = process.env.DB_USER || 'postgres';
-      const password = process.env.DB_PASSWORD || 'postgres';
-      const database = process.env.DB_NAME || 'coworking_space';
+      const host = process.env.DB_HOST || process.env.PGHOST || 'localhost';
+      const port = Number(process.env.DB_PORT || process.env.PGPORT) || 5432;
+      const user = process.env.DB_USER || process.env.PGUSER || 'postgres';
+      const password = process.env.DB_PASSWORD || process.env.PGPASSWORD || 'postgres';
+      const database = process.env.DB_NAME || process.env.PGDATABASE || (process.env.RAILWAY_ENVIRONMENT ? 'railway' : 'coworking_space');
       const useSsl = process.env.DB_SSL === 'true';
+
+      this.logger.log(` Connecting to PostgreSQL on ${host}:${port}/${database}...`);
 
       // First check if target database exists; if not, try to create it automatically
       try {
