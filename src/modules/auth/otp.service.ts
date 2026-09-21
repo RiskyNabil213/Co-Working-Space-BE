@@ -8,16 +8,22 @@ import * as nodemailer from 'nodemailer';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcryptjs';
 
-interface OtpRecord {
+interface OtpItem {
+  code: string;
   otpHash: string;
   expiresAt: Date;
+  createdAt: number;
+}
+
+interface UserOtpSession {
+  otps: OtpItem[];
   attempts: number;
 }
 
 @Injectable()
 export class OtpService {
   private readonly logger = new Logger(OtpService.name);
-  private otpStore = new Map<string, OtpRecord>();
+  private otpStore = new Map<string, UserOtpSession>();
 
   private getTransporter(): nodemailer.Transporter | null {
     const user = process.env.SMTP_USER;
@@ -38,32 +44,55 @@ export class OtpService {
     return null;
   }
 
-  // 1. Generate & Kirim OTP via Gmail dengan Non-Blocking Timeout
+  // 1. Generate & Kirim OTP via Gmail dengan Multi-OTP Persistence (Masa aktif 10 Menit)
   async sendOtp(email: string): Promise<{ success: boolean; message: string; debugOtp?: string }> {
     if (!email || !email.includes('@')) {
       throw new BadRequestException('Format email tidak valid.');
     }
 
     const normalizedEmail = email.trim().toLowerCase();
+    const now = Date.now();
 
-    // Buat 6 digit angka acak aman
-    const otp = crypto.randomInt(100000, 1000000).toString();
-    const otpDigits = otp.split('');
+    // Dapatkan sesi saat ini & bersihkan yang sudah kedaluwarsa
+    let session = this.otpStore.get(normalizedEmail);
+    if (session) {
+      session.otps = session.otps.filter((item) => new Date() <= item.expiresAt);
+      if (session.otps.length === 0) {
+        session.attempts = 0;
+      }
+    } else {
+      session = { otps: [], attempts: 0 };
+    }
 
-    // Hash OTP sebelum disimpan
-    const saltRounds = 10;
-    const otpHash = await bcrypt.hash(otp, saltRounds);
+    // Jika ada OTP yang baru saja dibuat (< 45 detik lalu), gunakan kembali kode tersebut
+    let otp: string;
+    const recentOtp = session.otps.find((item) => now - item.createdAt < 45 * 1000);
 
-    // Masa berlaku 5 menit
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+    if (recentOtp) {
+      otp = recentOtp.code;
+      this.logger.log(`🔄 [OTP REUSE] Email: ${normalizedEmail} | Menggunakan kembali OTP: ${otp}`);
+    } else {
+      // Buat 6 digit angka acak baru
+      otp = crypto.randomInt(100000, 1000000).toString();
+      const saltRounds = 10;
+      const otpHash = await bcrypt.hash(otp, saltRounds);
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 menit
 
-    this.otpStore.set(normalizedEmail, {
-      otpHash,
-      expiresAt,
-      attempts: 0,
-    });
+      // Tambahkan ke daftar OTP aktif (simpan sampai 5 kode aktif terakhir)
+      session.otps.push({
+        code: otp,
+        otpHash,
+        expiresAt,
+        createdAt: now,
+      });
 
-    this.logger.log(`🔑 [OTP GENERATED] Email: ${normalizedEmail} | OTP Code: ${otp} | Expires in: 5m`);
+      if (session.otps.length > 5) {
+        session.otps.shift();
+      }
+
+      this.otpStore.set(normalizedEmail, session);
+      this.logger.log(`🔑 [OTP GENERATED] Email: ${normalizedEmail} | OTP Code: ${otp} | Total Active Codes: ${session.otps.length}`);
+    }
 
     const transporter = this.getTransporter();
     const senderEmail = process.env.SMTP_USER || 'nabilrisky390@gmail.com';
@@ -107,7 +136,7 @@ export class OtpService {
                             ${otp}
                           </div>
                           <p style="font-size: 12px; color: #707175; margin-top: 16px; text-align: center;">
-                            ⏱️ Berlaku selama 5 menit. Jangan bagikan kode ini kepada siapa pun.
+                            ⏱️ Berlaku selama 10 menit. Jangan bagikan kode ini kepada siapa pun.
                           </p>
                         </td>
                       </tr>
@@ -129,7 +158,7 @@ export class OtpService {
         emailSent = true;
         this.logger.log(`📧 [EMAIL SENT] OTP successfully delivered to ${normalizedEmail}`);
       } catch (err: any) {
-        this.logger.warn(`⚠️ Pengiriman email ke ${normalizedEmail} mengalami kendala: ${err.message}. Mengaktifkan verifikasi langsung.`);
+        this.logger.warn(`⚠️ Pengiriman email ke ${normalizedEmail} terkendala: ${err.message}. Mengaktifkan verifikasi.`);
       }
     } else {
       this.logger.warn(`⚠️ Transporter SMTP belum terkonfigurasi di env. OTP Code: ${otp}`);
@@ -144,7 +173,7 @@ export class OtpService {
     };
   }
 
-  // 2. Verifikasi Input Pengguna
+  // 2. Verifikasi Input Pengguna (Mendukung semua kode OTP aktif yang masih berlaku)
   async verifyOtp(email: string, inputOtp: string): Promise<{ success: boolean; message: string }> {
     if (!email || !inputOtp) {
       throw new BadRequestException('Email dan kode OTP wajib diisi.');
@@ -152,35 +181,48 @@ export class OtpService {
 
     const normalizedEmail = email.trim().toLowerCase();
     const cleanOtp = inputOtp.trim();
-    const record = this.otpStore.get(normalizedEmail);
+    const session = this.otpStore.get(normalizedEmail);
 
-    if (!record) {
+    if (!session || !session.otps || session.otps.length === 0) {
       throw new BadRequestException('Kode OTP belum diminta atau sudah hangus. Silakan minta kode baru.');
     }
 
-    // Cek batas kedaluwarsa waktu
-    if (new Date() > record.expiresAt) {
+    // Bersihkan OTP yang sudah kedaluwarsa
+    session.otps = session.otps.filter((item) => new Date() <= item.expiresAt);
+
+    if (session.otps.length === 0) {
       this.otpStore.delete(normalizedEmail);
-      throw new BadRequestException('Kode OTP telah kedaluwarsa (lebih dari 5 menit). Silakan minta kode baru.');
+      throw new BadRequestException('Kode OTP telah kedaluwarsa. Silakan minta kode baru.');
     }
 
-    // Proteksi brute force (maks 3 kali percobaan salah)
-    if (record.attempts >= 3) {
+    // Proteksi percobaan salah beruntun
+    if (session.attempts >= 5) {
       this.otpStore.delete(normalizedEmail);
       throw new UnauthorizedException('Terlalu banyak percobaan salah. Silakan minta kode OTP baru.');
     }
 
-    // Cocokkan input dengan hash
-    const isMatch = await bcrypt.compare(cleanOtp, record.otpHash);
+    // Cocokkan input pengguna dengan SEMUA kode OTP yang masih aktif
+    let isMatch = false;
+    for (const item of session.otps) {
+      if (item.code === cleanOtp) {
+        isMatch = true;
+        break;
+      }
+      const matchHash = await bcrypt.compare(cleanOtp, item.otpHash);
+      if (matchHash) {
+        isMatch = true;
+        break;
+      }
+    }
 
     if (!isMatch) {
-      record.attempts += 1;
-      this.otpStore.set(normalizedEmail, record);
-      const sisa = 3 - record.attempts;
+      session.attempts += 1;
+      this.otpStore.set(normalizedEmail, session);
+      const sisa = 5 - session.attempts;
       throw new BadRequestException(`Kode OTP salah. Sisa kesempatan mencoba: ${sisa} kali.`);
     }
 
-    // Berhasil verifikasi: hapus OTP agar tidak bisa dipakai ulang (single-use)
+    // Berhasil verifikasi: bersihkan OTP untuk email ini
     this.otpStore.delete(normalizedEmail);
     this.logger.log(`✅ [OTP VERIFIED] Email: ${normalizedEmail} successfully verified.`);
 
