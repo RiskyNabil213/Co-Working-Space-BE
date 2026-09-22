@@ -238,57 +238,80 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       // Ensure Spaces exist
       const spacesCount = await this.get('SELECT COUNT(*) as count FROM spaces WHERE maker_id = ?', [makerId]);
       if (spacesCount && Number(spacesCount.count) === 0 && ownerId) {
-        await this.run(
-          `INSERT INTO spaces (maker_id, id_owner, nama_space, harga_per_jam, tipe, kapasitas, deskripsi, foto, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            makerId,
-            ownerId,
-            'Personal Desk - Flexi 01',
-            20000,
-            'desk',
-            1,
-            'Meja kerja individual yang tenang dan nyaman dengan colokan listrik, WiFi kencang 100Mbps, lampu meja LED, dan free refill air mineral.',
-            'desk_flexi_01.jpg',
-            now,
-            now,
-          ],
-        );
+        const seedSpacesList = [
+          {
+            nama_space: 'Personal Desk - Flexi 01',
+            harga_per_jam: 20000,
+            tipe: 'desk',
+            kapasitas: 1,
+            deskripsi: 'Meja kerja individual yang tenang dan nyaman dengan colokan listrik, WiFi kencang 100Mbps, lampu meja LED, dan free refill air mineral.',
+            foto: 'https://images.unsplash.com/photo-1527192491265-7e15c55b1ed2?auto=format&fit=crop&w=1200&q=85',
+          },
+          {
+            nama_space: 'Meeting Room Alpha',
+            harga_per_jam: 100000,
+            tipe: 'meeting_room',
+            kapasitas: 8,
+            deskripsi: 'Ruang rapat kedap suara berkapasitas 8 orang, dilengkapi Smart TV 55 inch, soundbar Bluetooth, whiteboard kaca, AC dingin, dan conference speaker.',
+            foto: 'https://images.unsplash.com/photo-1517502884422-41eaead166d4?auto=format&fit=crop&w=1200&q=85',
+          },
+          {
+            nama_space: 'Private Office Suite 01',
+            harga_per_jam: 150000,
+            tipe: 'private_office',
+            kapasitas: 4,
+            deskripsi: 'Ruang kantor privat eksklusif untuk tim kecil 4 orang, meja kerja ergonomis, smart door lock, dan lemari berkas.',
+            foto: 'https://images.unsplash.com/photo-1497215842964-222b430dc094?auto=format&fit=crop&w=1200&q=85',
+          },
+          {
+            nama_space: 'The Ascent Boardroom Suite',
+            harga_per_jam: 250000,
+            tipe: 'meeting_room',
+            kapasitas: 14,
+            deskripsi: 'High-tier boardroom featuring panoramic skyline view, Italian leather seating, dual 75-inch UHD commercial displays, and Polycom system.',
+            foto: 'https://images.unsplash.com/photo-1497366811353-6870744d04b2?auto=format&fit=crop&w=1200&q=85',
+          },
+          {
+            nama_space: 'Focus Station Dusk',
+            harga_per_jam: 25000,
+            tipe: 'desk',
+            kapasitas: 1,
+            deskripsi: 'Quiet alcove equipped with warm luminaire, Herman Miller calibrated ergonomics, and zero-distraction acoustic felt divider.',
+            foto: 'https://images.unsplash.com/photo-1504384308090-c894fdcc538d?auto=format&fit=crop&w=1200&q=85',
+          },
+          {
+            nama_space: 'Atrium Open Bench 06',
+            harga_per_jam: 15000,
+            tipe: 'desk',
+            kapasitas: 4,
+            deskripsi: 'Sunlit timber long table under natural atrium skylight, ideal for energetic creative co-working and casual pairing.',
+            foto: 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=1200&q=85',
+          },
+        ];
 
-        await this.run(
-          `INSERT INTO spaces (maker_id, id_owner, nama_space, harga_per_jam, tipe, kapasitas, deskripsi, foto, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            makerId,
-            ownerId,
-            'Meeting Room Alpha',
-            100000,
-            'meeting_room',
-            8,
-            'Ruang rapat kedap suara berkapasitas 8 orang, dilengkapi Smart TV 55 inch, soundbar Bluetooth, whiteboard kaca, AC dingin, dan conference speaker.',
-            'meeting_room_alpha.jpg',
-            now,
-            now,
-          ],
-        );
-
-        await this.run(
-          `INSERT INTO spaces (maker_id, id_owner, nama_space, harga_per_jam, tipe, kapasitas, deskripsi, foto, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            makerId,
-            ownerId,
-            'Private Office Suite 01',
-            150000,
-            'private_office',
-            4,
-            'Ruang kantor privat eksklusif untuk tim kecil 4 orang, meja kerja ergonomis, smart door lock, dan lemari berkas.',
-            'private_office_01.jpg',
-            now,
-            now,
-          ],
-        );
+        for (const s of seedSpacesList) {
+          await this.run(
+            `INSERT INTO spaces (maker_id, id_owner, nama_space, harga_per_jam, tipe, kapasitas, deskripsi, foto, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [makerId, ownerId, s.nama_space, s.harga_per_jam, s.tipe, s.kapasitas, s.deskripsi, s.foto, now, now],
+          );
+        }
         this.logger.log(' Default spaces seeded successfully.');
+      } else {
+        // Auto-migrate any legacy relative image names in existing database
+        await this.run(
+          `UPDATE spaces SET foto = 'https://images.unsplash.com/photo-1527192491265-7e15c55b1ed2?auto=format&fit=crop&w=1200&q=85'
+           WHERE (foto IS NULL OR foto = '' OR foto = 'desk_flexi_01.jpg' OR foto NOT LIKE 'http%') AND tipe = 'desk'`,
+        );
+        await this.run(
+          `UPDATE spaces SET foto = 'https://images.unsplash.com/photo-1517502884422-41eaead166d4?auto=format&fit=crop&w=1200&q=85'
+           WHERE (foto IS NULL OR foto = '' OR foto = 'meeting_room_alpha.jpg' OR foto NOT LIKE 'http%') AND tipe = 'meeting_room'`,
+        );
+        await this.run(
+          `UPDATE spaces SET foto = 'https://images.unsplash.com/photo-1497215842964-222b430dc094?auto=format&fit=crop&w=1200&q=85'
+           WHERE (foto IS NULL OR foto = '' OR foto = 'private_office_01.jpg' OR foto NOT LIKE 'http%') AND tipe = 'private_office'`,
+        );
+        this.logger.log(' Migrated legacy space photo paths to high-res CDN images.');
       }
 
       // Ensure Discounts exist
